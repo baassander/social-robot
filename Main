@@ -1,0 +1,122 @@
+#include <Arduino.h>
+#include "DFRobotDFPlayerMini.h"
+
+// -------------------- DFPLAYER INSTELLING --------------------
+HardwareSerial mySerial(2);   // UART2 voor DFPlayer (TX=17, RX=16)
+DFRobotDFPlayerMini myDFPlayer;
+
+const int busyPin = 26;       // DFPlayer BUSY pin → GPIO26
+
+// -------------------- KNOPINSTELLING --------------------
+const int buttonPins[6] = {5, 22, 23, 18, 19, 21}; // Knoppen 1-5 = levels, knop 6 = stop
+const int numButtons = sizeof(buttonPins) / sizeof(buttonPins[0]);
+bool lastButtonState[numButtons];
+bool buttonState[numButtons];
+const unsigned long debounceDelay = 50;
+unsigned long lastDebounceTime[numButtons] = {0};
+
+// -------------------- LEVEL TRACKS --------------------
+// Pas hier aan welke tracks bij welk level horen
+const int tracksPerLevel[5][3] = {
+  {1, 2, 3},   // Level 1
+  {4, 5, 6},   // Level 2
+  {7, 8, 9},   // Level 3
+  {10,11,12},  // Level 4
+  {13,14,15}   // Level 5
+};
+const int tracksPerLevelCount[5] = {3, 3, 3, 3, 3}; // aantal tracks per level
+
+// -------------------- STATUSVARIABELEN --------------------
+int currentLevel = -1;    // -1 = geen level actief
+bool trackPlaying = false;
+
+// -------------------- HULPFUNCTIES --------------------
+void playTrack(int track) {
+  myDFPlayer.play(track);
+  Serial.print("▶️ Audio track ");
+  Serial.print(track);
+  Serial.println(" gestart");
+}
+
+int getRandomTrackForLevel(int level) {
+  int count = tracksPerLevelCount[level];
+  int index = random(0, count);
+  return tracksPerLevel[level][index];
+}
+
+// -------------------- SETUP --------------------
+void setup() {
+  Serial.begin(115200);
+  Serial.println("🎬 Robot start op...");
+
+  mySerial.begin(9600, SERIAL_8N1, 16, 17);
+  pinMode(busyPin, INPUT);
+
+  if (!myDFPlayer.begin(mySerial)) {
+    Serial.println("❌ DFPlayer niet gevonden!");
+  }
+  delay(500);
+  myDFPlayer.volume(20);
+  Serial.println("✅ DFPlayer verbonden");
+
+  for (int i = 0; i < numButtons; i++) {
+    pinMode(buttonPins[i], INPUT_PULLUP);
+    lastButtonState[i] = HIGH;
+  }
+
+  randomSeed(analogRead(0));
+
+  // -------------------- STARTGELUID --------------------
+  Serial.println("▶️ Startgeluid speelt af...");
+  playTrack(1); // 0001.mp3
+  while(digitalRead(busyPin) == LOW) delay(10);
+  Serial.println("✅ Startgeluid klaar, robot klaar voor gebruik");
+}
+
+// -------------------- LOOP --------------------
+void loop() {
+  // KNOPPEN LEZEN
+  for (int i = 0; i < numButtons; i++) {
+    int reading = digitalRead(buttonPins[i]);
+
+    if (reading != lastButtonState[i]) lastDebounceTime[i] = millis();
+
+    if ((millis() - lastDebounceTime[i]) > debounceDelay) {
+      if (reading != buttonState[i]) {
+        buttonState[i] = reading;
+
+        if (buttonState[i] == LOW) {
+          if (i == 5) { // Stopknop
+            Serial.println("⏹ Stopknop ingedrukt");
+            myDFPlayer.stop();
+            currentLevel = -1;
+            trackPlaying = false;
+          } else { // Levels 1-5
+            if (currentLevel != i) {
+              currentLevel = i;
+              Serial.print("🔹 Level ");
+              Serial.print(currentLevel + 1);
+              Serial.println(" geselecteerd");
+
+              int track = getRandomTrackForLevel(currentLevel);
+              playTrack(track);
+              trackPlaying = true;
+            }
+          }
+        }
+      }
+    }
+
+    lastButtonState[i] = reading;
+  }
+
+  // RANDOM TRACKS
+  if (currentLevel != -1 && !trackPlaying && digitalRead(busyPin) == HIGH) {
+    int track = getRandomTrackForLevel(currentLevel);
+    playTrack(track);
+    trackPlaying = true;
+  }
+
+  // TRACK STATUS UPDATEN
+  if (trackPlaying && digitalRead(busyPin) == LOW) trackPlaying = false;
+}
