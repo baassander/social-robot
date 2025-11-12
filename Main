@@ -12,7 +12,7 @@ const int buttonPins[6] = {5, 22, 23, 18, 19, 21};  // 5 levels + 1 stopknop
 
 // ---------- Level-configuratie ----------
 struct LevelConfig {
-  int tracks[3];         // tracks per level
+  int tracks[6];         // tracks per level
   int trackCount;        // aantal tracks
   int relays[4];         // 0 = uit, 1 = flits actief
   int flashMin;          // minimale flits interval (ms)
@@ -22,11 +22,11 @@ struct LevelConfig {
 };
 
 LevelConfig levels[5] = {
-  {{2,3,4}, 3, {0,0,0,0}, 500, 2000, 10, 5},  // Level 1
-  {{4,5,6}, 3, {1,0,0,0}, 100, 500, 18, 21},   // Level 2
-  {{7,8,9}, 3, {1,1,1,0}, 50, 200, 20, 22},    // Level 3
-  {{10,11,12}, 3, {1,1,1,1}, 50, 75, 22, 23}, // Level 4
-  {{13,14,15}, 3, {1,1,0,1}, 100, 300, 25, 24} // Level 5
+  {{7,8,9,10,11,12}, 6, {0,0,0,0}, 500, 2000, 10, 2},  // Level 1
+  {{13,14,15,16}, 4, {1,0,0,0}, 100, 500, 15, 3},   // Level 2
+  {{17,18,19,20,21,22}, 6, {1,1,1,0}, 50, 200, 20, 4},    // Level 3
+  {{23,24,25,26}, 4, {1,1,1,1}, 50, 75, 22, 5}, // Level 4
+  {{26,27,28,29,30}, 5, {1,1,0,1}, 100, 300, 25, 6} // Level 5
 };
 
 // ---------- Globale variabelen ----------
@@ -125,7 +125,7 @@ void setup() {
   }
 
   Serial.println("✅ DFPlayer verbonden");
-  myDFPlayer.volume(10);
+  myDFPlayer.volume(18);
   randomSeed(analogRead(34));
 
   // 🔊 SPEEL AUDIO 1 bij opstart
