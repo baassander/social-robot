@@ -14,19 +14,18 @@ const int buttonPins[6] = {5, 22, 23, 18, 19, 21};  // 5 levels + 1 stopknop
 struct LevelConfig {
   int tracks[6];         // tracks per level
   int trackCount;        // aantal tracks
-  int relays[4];         // 0 = uit, 1 = flits actief
-  int flashMin;          // minimale flits interval (ms)
-  int flashMax;          // maximale flits interval (ms)
+  int relays[4];         // 0 = uit, 1 = actief (flitsen bij start)
+  int flashTime;         // hoe lang de relais aan blijven (ms)
   int volume;            // DFPlayer volume 0-30
   int uitlegTrack;       // track voor uitleg bij eerste klik
 };
 
 LevelConfig levels[5] = {
-  {{7,8,9,10,11,12}, 6, {0,0,0,0}, 500, 2000, 10, 2},  // Level 1
-  {{13,14,15,16}, 4, {1,0,0,0}, 100, 500, 15, 3},   // Level 2
-  {{17,18,19,20,21,22}, 6, {1,1,1,0}, 50, 200, 20, 4},    // Level 3
-  {{23,24,25,26}, 4, {1,1,1,1}, 50, 75, 22, 5}, // Level 4
-  {{26,27,28,29,30}, 5, {1,1,0,1}, 100, 300, 25, 6} // Level 5
+  {{7,8,9,10,11,12},    6, {0,0,0,0}, 200, 5, 2},       // Level 1
+  {{13,14,15,16},       4, {1,0,0,0}, 200, 10, 3},          // Level 2
+  {{17,18,19,20,21,22}, 6, {1,0,0,1}, 200, 14, 4},    // Level 3
+  {{23,24,25,26},       4, {1,1,1,1}, 200, 18, 5},          // Level 4
+  {{26,27,28,29,30},    5, {1,1,1,1}, 200, 22, 6}        // Level 5
 };
 
 // ---------- Globale variabelen ----------
@@ -35,11 +34,6 @@ DFRobotDFPlayerMini myDFPlayer;
 
 int currentLevel = -1;
 int pendingLevel = -1;
-bool relaysOn = false;
-unsigned long lastFlash = 0;
-unsigned long flashDelay = 0;
-bool isPlaying = false;
-unsigned long lastCheck = 0;
 int lastTrackPlayed = -1;
 
 // ---------- Functies ----------
@@ -50,52 +44,74 @@ void setAllRelays(bool state) {
   digitalWrite(RELAY4, state);
 }
 
+// 🔹 Relais pulse één keer vóór elke track
+void pulseRelays(int level) {
+  Serial.println("⚡️ Relais tegelijk aan en uit vóór de track...");
+
+  // Zet alle actieve relais aan
+  for (int i = 0; i < 4; i++) {
+    if (levels[level-1].relays[i] == 1) {
+      int pin = (i==0?RELAY1:(i==1?RELAY2:(i==2?RELAY3:RELAY4)));
+      digitalWrite(pin, LOW); // AAN
+    }
+  }
+
+  delay(levels[level-1].flashTime);  // hou ze kort aan
+
+  // Zet ze allemaal weer uit
+  setAllRelays(HIGH);
+
+  Serial.println("✅ Relais pulse afgerond");
+}
+
 void stopAll() {
   Serial.println("🛑 Alles gestopt");
   setAllRelays(HIGH);
   myDFPlayer.stop();
   currentLevel = -1;
   pendingLevel = -1;
-  isPlaying = false;
 }
 
-void playRandomTrack(int level) {
-  int count = levels[level-1].trackCount;
-  int randomIndex;
-  do {
-    randomIndex = random(0, count);
-  } while (levels[level-1].tracks[randomIndex] == lastTrackPlayed);
+// Speel alle tracks van een level achter elkaar
+void playLevelContinuous(int level) {
+  while (currentLevel == level) {
+    int count = levels[level-1].trackCount;
+    int randomIndex;
+    do {
+      randomIndex = random(0, count);
+    } while (levels[level-1].tracks[randomIndex] == lastTrackPlayed);
 
-  int track = levels[level-1].tracks[randomIndex];
-  lastTrackPlayed = track;
+    int track = levels[level-1].tracks[randomIndex];
+    lastTrackPlayed = track;
 
-  Serial.print("▶️ Level ");
-  Serial.print(level);
-  Serial.print(" — speelt random track ");
-  Serial.println(track);
-  myDFPlayer.play(track);
-  isPlaying = true;
-}
-
-void flashRelaysLevel(int level) {
-  unsigned long now = millis();
-  if (now - lastFlash > flashDelay) {
-    relaysOn = !relaysOn;
-
+    // 🔹 Pulse relais één keer voor deze track
     for (int i = 0; i < 4; i++) {
-      if (levels[level-1].relays[i] == 1) {
-        digitalWrite((i==0?RELAY1:(i==1?RELAY2:(i==2?RELAY3:RELAY4))),
-                     relaysOn ? LOW : HIGH);
-      } else {
-        digitalWrite((i==0?RELAY1:(i==1?RELAY2:(i==2?RELAY3:RELAY4))), HIGH);
+      int pin = (i==0?RELAY1:(i==1?RELAY2:(i==2?RELAY3:RELAY4)));
+      digitalWrite(pin, (levels[level-1].relays[i] == 1) ? LOW : HIGH);
+    }
+    delay(levels[level-1].flashTime);
+    setAllRelays(HIGH);
+
+    // 🔹 Speel track
+    myDFPlayer.play(track);
+
+    // 🔹 Korte buffer zodat track echt start voordat we checken BUSY
+    delay(100);
+
+    // 🔹 Wacht tot track klaar is
+    while (digitalRead(DF_BUSY) == LOW) {
+      delay(50);
+      if (digitalRead(buttonPins[5]) == LOW) { // Stopknop
+        stopAll();
+        return;
       }
     }
 
-    flashDelay = relaysOn ? random(levels[level-1].flashMin, levels[level-1].flashMax)
-                          : random(levels[level-1].flashMin, levels[level-1].flashMax*4);
-    lastFlash = now;
+    delay(50); // kleine buffer voor volgende track
   }
 }
+
+
 
 // ---------- Setup ----------
 void setup() {
@@ -125,7 +141,7 @@ void setup() {
   }
 
   Serial.println("✅ DFPlayer verbonden");
-  myDFPlayer.volume(18);
+  myDFPlayer.volume(12);
   randomSeed(analogRead(34));
 
   // 🔊 SPEEL AUDIO 1 bij opstart
@@ -165,23 +181,9 @@ void loop() {
         currentLevel = selectedLevel;
         pendingLevel = -1;
         myDFPlayer.volume(levels[currentLevel-1].volume);
-        playRandomTrack(currentLevel);
+
+        playLevelContinuous(currentLevel); // start achter elkaar afspelen
       }
-    }
-  }
-
-  // Flash gedrag tijdens spelen
-  if (currentLevel != -1) {
-    flashRelaysLevel(currentLevel);
-  }
-
-  // Check elke halve seconde of de track klaar is
-  if (currentLevel != -1 && millis() - lastCheck > 500) {
-    lastCheck = millis();
-    if (isPlaying && digitalRead(DF_BUSY) == HIGH) {
-      Serial.println("✅ Track afgelopen — volgende random track start...");
-      delay(1000);
-      playRandomTrack(currentLevel);
     }
   }
 }
