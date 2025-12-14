@@ -1,168 +1,159 @@
 /*******************************************************************
-* File Name         : Code Social Robot Thunderstorm fobia
-* Date 14-12-2025,		Author Sander Blokalnd 			
-/******************************************************************/
+* Social Robot – Thunderstorm Phobia
+* Stable DFPlayer + Relays + Pause system
+*******************************************************************/
 
 #include <HardwareSerial.h>
 #include <DFRobotDFPlayerMini.h>
 
-// BLue indication-LEDs
+// ---------- Blauwe uitleg / pauze LEDs ----------
 const int blueLeds[4] = {25, 33, 32, 15};
 
-// ---------- Pin-definnitions ----------
+// ---------- Relais ----------
 #define RELAY1 13
 #define RELAY2 12
 #define RELAY3 14
 #define RELAY4 27
-#define DF_BUSY 26  // DFPlayer BUSY-pin (LOW = playing)
 
-const int buttonPins[6] = {5, 22, 23, 18, 19, 21};  // 5 levels + 1 stopbutton
+// ---------- DFPlayer ----------
+#define DF_BUSY 26   // LOW = playing
 
-// ---------- Level-configuratie ----------
+// ---------- Buttons ----------
+const int buttonPins[6] = {5, 22, 23, 18, 19, 21}; // 5 levels + stop
+
+// ---------- Level configuration ----------
 struct LevelConfig {
-  int tracks[6];         // tracks per level
-  int trackCount;        // tracks amount
-  int relays[4];         // 0 = off, 1 = active (lighting at start)
-  int flashTime;         // How long lights active (ms)
-  int volume;            // DFPlayer volume 0-30
-  int uitlegTrack;       // track for explanation by first click
+  int tracks[10];
+  int trackCount;
+  int relays[4];       // which relays pulse
+  int flashTime;       // ms
+  int volume;
+  int uitlegTrack;
 };
 
 LevelConfig levels[5] = {
-  {{7,8,9,10,11,12},    6, {0,0,0,0}, 200, 5, 2},           // Level 1
-  {{13,14,15,16},       4, {1,0,0,0}, 200, 10, 3},          // Level 2
-  {{17,18,19,20,21,22}, 6, {1,0,0,1}, 200, 14, 4},          // Level 3
-  {{23,24,25,26},       4, {1,1,1,1}, 200, 18, 5},          // Level 4
-  {{26,27,28,29,30},    5, {1,1,1,1}, 200, 22, 6}           // Level 5
+  {{7,8,9,10,11,12},    6, {0,0,0,0}, 200,  5, 2},
+  {{13,14,15,16},      4, {1,0,0,0}, 200, 10, 3},
+  {{17,18,19,20,21,22},6, {1,0,0,1}, 200, 14, 4},
+  {{23,24,25,26},      4, {1,1,1,1}, 200, 18, 5},
+  {{26,27,28,29,30},   5, {1,1,1,1}, 200, 22, 6}
 };
 
-// ---------- GLOBAL VARIABLES ----------
-HardwareSerial mySerial(2);  // UART2 
+// ---------- States ----------
+enum SystemState { IDLE, WAIT_CONFIRM, PLAYING, PAUSED };
+SystemState systemState = IDLE;
+
+// ---------- Globals ----------
+HardwareSerial mySerial(2);
 DFRobotDFPlayerMini myDFPlayer;
 
 int currentLevel = -1;
 int pendingLevel = -1;
 int lastTrackPlayed = -1;
+bool trackPlaying = false;
 
-// ---------- Functions ----------
-void setAllRelays(bool state) {
-  digitalWrite(RELAY1, state);
-  digitalWrite(RELAY2, state);
-  digitalWrite(RELAY3, state);
-  digitalWrite(RELAY4, state);
+// ---------- Utility ----------
+void setAllRelays(bool off) {
+  digitalWrite(RELAY1, off);
+  digitalWrite(RELAY2, off);
+  digitalWrite(RELAY3, off);
+  digitalWrite(RELAY4, off);
 }
 
-void setBlueLeds(bool state) {
+void setBlueLeds(bool on) {
   for (int i = 0; i < 4; i++) {
-    digitalWrite(blueLeds[i], state ? HIGH : LOW);
+    digitalWrite(blueLeds[i], on ? HIGH : LOW);
   }
 }
 
-// 🔹 Relais pulse één keer vóór elke track
-void pulseRelays(int level) {
-  Serial.println("⚡️ Relais tegelijk aan en uit vóór de track...");
+void waitUntilAudioFinished() {
+  delay(300);
+  while (digitalRead(DF_BUSY) == LOW) {
+    delay(100);
+  }
+}
 
+// ---------- Relays pulse ----------
+void pulseRelays(int level) {
   for (int i = 0; i < 4; i++) {
-    if (levels[level-1].relays[i] == 1) {
+    if (levels[level-1].relays[i]) {
       int pin = (i==0?RELAY1:(i==1?RELAY2:(i==2?RELAY3:RELAY4)));
-      digitalWrite(pin, LOW); // AAN
+      digitalWrite(pin, LOW);
     }
   }
   delay(levels[level-1].flashTime);
   setAllRelays(HIGH);
 }
 
-//Stop current excirsize 
+// ---------- Audio ----------
+void playOneRandomTrack(int level) {
+  int count = levels[level-1].trackCount;
+  int index;
+
+  do {
+    index = random(0, count);
+  } while (levels[level-1].tracks[index] == lastTrackPlayed);
+
+  lastTrackPlayed = levels[level-1].tracks[index];
+
+  pulseRelays(level);
+
+  myDFPlayer.play(lastTrackPlayed);
+  trackPlaying = true;
+  delay(300); // allow BUSY to go LOW
+}
+
+// ---------- Stop ----------
 void stopAll() {
-   setAllRelays(HIGH);
+  setAllRelays(HIGH);
+  setBlueLeds(false);
   myDFPlayer.stop();
+
   currentLevel = -1;
   pendingLevel = -1;
+  trackPlaying = false;
+  systemState = IDLE;
 }
 
-//wait until DFPlayer is done with playing(with LED on)
-void waitUntilAudioFinished() {
-  delay(300); // Short buffer so DF_BUSY  is stab le
-  while (digitalRead(DF_BUSY) == LOW) {
-    delay(100);
-  }
-}
-
-// Play every track one after the other in a random order in current level 
-void playLevelContinuous(int level) {
-  while (currentLevel == level) {
-    int count = levels[level-1].trackCount;
-    int randomIndex;
-    do {
-      randomIndex = random(0, count);
-    } while (levels[level-1].tracks[randomIndex] == lastTrackPlayed);
-
-    int track = levels[level-1].tracks[randomIndex];
-    lastTrackPlayed = track;
-
-    //Pulse relais once before the track
-    for (int i = 0; i < 4; i++) {
-      int pin = (i==0?RELAY1:(i==1?RELAY2:(i==2?RELAY3:RELAY4)));
-      digitalWrite(pin, (levels[level-1].relays[i] == 1) ? LOW : HIGH);
-    }
-    delay(levels[level-1].flashTime);
-    setAllRelays(HIGH);
-
-    //Play track
-    myDFPlayer.play(track);
-    delay(200);
-
-    //Wait until track is done
-    while (digitalRead(DF_BUSY) == LOW) {
-      delay(50);
-      if (digitalRead(buttonPins[5]) == LOW) { // Stopbutton
-        stopAll();
-        return;
-      }
-    }
-
-    delay(100);
-  }
+// ---------- Pause ----------
+void playPauseAudio() {
+  setBlueLeds(true);
+  myDFPlayer.play(99);   // ⬅️ pauze-audio (zelf kiezen)
+  waitUntilAudioFinished();
+  setBlueLeds(false);
 }
 
 // ---------- Setup ----------
 void setup() {
   Serial.begin(115200);
 
-  // Relais setup
   pinMode(RELAY1, OUTPUT);
   pinMode(RELAY2, OUTPUT);
   pinMode(RELAY3, OUTPUT);
   pinMode(RELAY4, OUTPUT);
   setAllRelays(HIGH);
 
-  // Blauwe LEDs setup
   for (int i = 0; i < 4; i++) {
     pinMode(blueLeds[i], OUTPUT);
     digitalWrite(blueLeds[i], LOW);
   }
 
-  // DFPlayer BUSY-pin
   pinMode(DF_BUSY, INPUT);
 
-  // buttons
   for (int i = 0; i < 6; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
   }
 
-  // DFPlayer on UART2
   mySerial.begin(9600, SERIAL_8N1, 16, 17);
   if (!myDFPlayer.begin(mySerial)) {
-    Serial.println("DFPlayer not found!");
     while (true);
   }
 
-  Serial.println("DFPlayer found");
-  myDFPlayer.volume(12);
   randomSeed(analogRead(34));
+  myDFPlayer.volume(12);
 
-  //Play AUDIO 1 at startup with blue leds on 
-   setBlueLeds(true);
+  // Startup audio
+  setBlueLeds(true);
   myDFPlayer.play(1);
   waitUntilAudioFinished();
   setBlueLeds(false);
@@ -170,32 +161,73 @@ void setup() {
 
 // ---------- Loop ----------
 void loop() {
+
+  // ---------- Buttons ----------
   for (int i = 0; i < 6; i++) {
     if (digitalRead(buttonPins[i]) == LOW) {
-      delay(200);  // debounce
+      delay(200);
 
-      if (i == 5) {  // Stopbutton
+      // STOP
+      if (i == 5) {
         stopAll();
-        continue;
+        return;
+      }
+
+      // PAUSE / RESUME
+      if (systemState == PLAYING) {
+        systemState = PAUSED;
+        myDFPlayer.stop();
+        trackPlaying = false;
+        playPauseAudio();
+        return;
+      }
+
+      if (systemState == PAUSED) {
+        systemState = PLAYING;
+        return;
       }
 
       int selectedLevel = i + 1;
 
-      // First click → play explanation
-      if (pendingLevel == -1 && currentLevel == -1) {
+      // FIRST CLICK → explanation
+      if (systemState == IDLE) {
         pendingLevel = selectedLevel;
+        systemState = WAIT_CONFIRM;
+
         setBlueLeds(true);
         myDFPlayer.play(levels[pendingLevel-1].uitlegTrack);
         waitUntilAudioFinished();
         setBlueLeds(false);
+        return;
       }
-      // Second click → start level
-      else if (pendingLevel == selectedLevel && currentLevel == -1) {
+
+      // SECOND CLICK → start level
+      if (systemState == WAIT_CONFIRM && pendingLevel == selectedLevel) {
         currentLevel = selectedLevel;
         pendingLevel = -1;
+        systemState = PLAYING;
+
         myDFPlayer.volume(levels[currentLevel-1].volume);
-        playLevelContinuous(currentLevel);
+        trackPlaying = false;
+        return;
       }
+    }
+  }
+
+  // ---------- Playback state ----------
+  if (systemState == PLAYING) {
+
+    if (trackPlaying && digitalRead(DF_BUSY) == LOW) {
+      return; // still playing
+    }
+
+    if (trackPlaying && digitalRead(DF_BUSY) == HIGH) {
+      trackPlaying = false;
+      delay(300);
+    }
+
+    if (!trackPlaying) {
+      playOneRandomTrack(currentLevel);
     }
   }
 }
