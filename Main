@@ -1,6 +1,6 @@
 /*******************************************************************
 * Social Robot – Thunderstorm Phobia
-* Stable DFPlayer + Relays + Pause system
+* Stable version with pause + resume delay
 *******************************************************************/
 
 #include <HardwareSerial.h>
@@ -40,7 +40,14 @@ LevelConfig levels[5] = {
 };
 
 // ---------- States ----------
-enum SystemState { IDLE, WAIT_CONFIRM, PLAYING, PAUSED };
+enum SystemState {
+  IDLE,
+  WAIT_CONFIRM,
+  PLAYING,
+  PAUSED,
+  RESUME_DELAY
+};
+
 SystemState systemState = IDLE;
 
 // ---------- Globals ----------
@@ -50,7 +57,12 @@ DFRobotDFPlayerMini myDFPlayer;
 int currentLevel = -1;
 int pendingLevel = -1;
 int lastTrackPlayed = -1;
+
 bool trackPlaying = false;
+
+// Resume delay
+unsigned long resumeStartTime = 0;
+const unsigned long RESUME_DELAY_TIME = 10000; // 10 sec
 
 // ---------- Utility ----------
 void setAllRelays(bool off) {
@@ -115,12 +127,11 @@ void stopAll() {
   systemState = IDLE;
 }
 
-// ---------- Pause ----------
+// ---------- Pause audio ----------
 void playPauseAudio() {
   setBlueLeds(true);
-  myDFPlayer.play(99);   // ⬅️ pauze-audio (zelf kiezen)
+  myDFPlayer.play(99);   // pause audio
   waitUntilAudioFinished();
-  setBlueLeds(false);
 }
 
 // ---------- Setup ----------
@@ -173,7 +184,7 @@ void loop() {
         return;
       }
 
-      // PAUSE / RESUME
+      // PAUSE
       if (systemState == PLAYING) {
         systemState = PAUSED;
         myDFPlayer.stop();
@@ -182,8 +193,11 @@ void loop() {
         return;
       }
 
+      // UNPAUSE → start delay
       if (systemState == PAUSED) {
-        systemState = PLAYING;
+        systemState = RESUME_DELAY;
+        resumeStartTime = millis();
+        setBlueLeds(true);
         return;
       }
 
@@ -214,12 +228,25 @@ void loop() {
     }
   }
 
-  // ---------- Playback state ----------
+  // ---------- Resume delay ----------
+  if (systemState == RESUME_DELAY) {
+
+    if (digitalRead(buttonPins[5]) == LOW) {
+      stopAll();
+      return;
+    }
+
+    if (millis() - resumeStartTime >= RESUME_DELAY_TIME) {
+      systemState = PLAYING;
+      setBlueLeds(false);
+      trackPlaying = false;
+    }
+  }
+
+  // ---------- Playback ----------
   if (systemState == PLAYING) {
 
-    if (trackPlaying && digitalRead(DF_BUSY) == LOW) {
-      return; // still playing
-    }
+    if (trackPlaying && digitalRead(DF_BUSY) == LOW) return;
 
     if (trackPlaying && digitalRead(DF_BUSY) == HIGH) {
       trackPlaying = false;
