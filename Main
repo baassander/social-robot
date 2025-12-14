@@ -1,7 +1,8 @@
 /*******************************************************************
-* Social Robot – Thunderstorm Phobia
-* Stable version with pause + resume delay
-*******************************************************************/
+* File Name : Code Social Robot Thunderstorm phobia
+* Author    : Sander Blokland
+* Date      : 14-12-2025
+/*******************************************************************/
 
 #include <HardwareSerial.h>
 #include <DFRobotDFPlayerMini.h>
