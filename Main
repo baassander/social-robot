@@ -1,34 +1,63 @@
 /*******************************************************************
-* File Name         : Social Robot Thunderstorm fobia
-* Date              : 14-12-2025
+* File Name         : Social Robot Thunderstorm phobia
+* Date              : 31-01-2026
 * Author            : Sander Blokland
 /*******************************************************************/
 
 #include <HardwareSerial.h>
 #include <DFRobotDFPlayerMini.h>
 
-// Blauwe uitleg-LEDs
+///////////////////////////////////////////
+//
+// Blue LEDs are used to visually indicate
+// explanation and pause moments.
+// They turn on during spoken explanations
+// and while the system is paused.
+//
+///////////////////////////////////////////
 const int blueLeds[4] = {25, 33, 32, 15};
 
-// ---------- Pin-definities ----------
-#define RELAY1 13
+///////////////////////////////////////////
+//
+// Relay outputs control lightning effects.
+// DF_BUSY is read from the DFPlayer to
+// detect whether audio is currently playing.
+//
+///////////////////////////////////////////#define RELAY1 13
 #define RELAY2 12
 #define RELAY3 14
 #define RELAY4 27
-#define DF_BUSY 26  // DFPlayer BUSY-pin (LOW = playing)
+#define DF_BUSY 26  // DFPlayer BUSY pin (LOW = playing)
 
-const int buttonPins[6] = {5, 22, 23, 18, 19, 21};  // 5 levels + 1 stopknop
+///////////////////////////////////////////
+//
+// Button inputs:
+// - Buttons 1–5 select levels
+// - Button 6 is the stop button
+//
+///////////////////////////////////////////
+const int buttonPins[6] = {5, 22, 23, 18, 19, 21};  // 5 levels + 1 stop button
 
-// ---------- Level-configuratie ----------
+///////////////////////////////////////////
+//
+// Level configuration
+//
+///////////////////////////////////////////
 struct LevelConfig {
   int tracks[6];         // tracks per level
-  int trackCount;        // aantal tracks
-  int relays[4];         // 0 = uit, 1 = actief (flitsen bij start)
-  int flashTime;         // hoe lang relais aan blijven (ms)
+  int trackCount;        // number of tracks
+  int relays[4];         // 0 = off, 1 = active (flash on start)
+  int flashTime;         // how long relays stay on (ms)
   int volume;            // DFPlayer volume 0-30
-  int uitlegTrack;       // track voor uitleg bij eerste klik
+  int uitlegTrack;       // explanation track on first click
 };
 
+///////////////////////////////////////////
+//
+// Configuration for the 5 fear levels.
+// explanation(random tracks, number of tracks, which relays flashes, how long flashes are on, volume, explanation track)
+//
+///////////////////////////////////////////
 LevelConfig levels[5] = {
   {{7,8,9,10,11,12},    6, {0,0,0,0}, 200, 5, 2},           // Level 1
   {{13,14,15,16},       4, {1,0,0,0}, 200, 10, 3},          // Level 2
@@ -37,13 +66,26 @@ LevelConfig levels[5] = {
   {{26,27,28,29,30},    5, {1,1,1,1}, 200, 22, 6}           // Level 5
 };
 
-// ---------- Pauze-tracks ----------
+///////////////////////////////////////////
+//
+// Pause tracks are calming sounds.
+// These can be triggered during a level
+// by pressing any level button again.
+//
+///////////////////////////////////////////
 const int pauseTracks[27] = {31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57};
 const int pauseTrackCount = 27;
-int pauseTrackVolume = 10; // volume voor pauze tracks
-int pauseDelay = 10000;    // 10 seconden wachten na pauze
+int pauseTrackVolume = 10; // volume for pause tracks
+int pauseDelay = 10000;    // wait 10 seconds after pause
 
-// ---------- Globale variabelen ----------
+///////////////////////////////////////////
+//
+// Global state variables:
+// - currentLevel: active level
+// - pendingLevel: selected but not started
+// - lastTrackPlayed: prevents repetition
+//
+///////////////////////////////////////////
 HardwareSerial mySerial(2);  // UART2
 DFRobotDFPlayerMini myDFPlayer;
 
@@ -51,7 +93,12 @@ int currentLevel = -1;
 int pendingLevel = -1;
 int lastTrackPlayed = -1;
 
-// ---------- Functies ----------
+///////////////////////////////////////////
+//
+// Sets all relays ON or OFF at once.
+// HIGH = off (relay module logic)
+//
+///////////////////////////////////////////
 void setAllRelays(bool state) {
   digitalWrite(RELAY1, state);
   digitalWrite(RELAY2, state);
@@ -59,26 +106,41 @@ void setAllRelays(bool state) {
   digitalWrite(RELAY4, state);
 }
 
+///////////////////////////////////////////
+//
+// Turns all blue LEDs on or off.
+//
+///////////////////////////////////////////
 void setBlueLeds(bool state) {
   for (int i = 0; i < 4; i++) {
     digitalWrite(blueLeds[i], state ? HIGH : LOW);
   }
 }
 
-// Relais pulse één keer vóór elke track
+///////////////////////////////////////////
+//
+// Pulses the relays briefly before a track
+// to simulate a lightning flash.
+//
+///////////////////////////////////////////
 void pulseRelays(int level) {
-  Serial.println("⚡️ Relais tegelijk aan en uit vóór de track...");
+  Serial.println("Relays on and off together before the track...");
   for (int i = 0; i < 4; i++) {
     if (levels[level-1].relays[i] == 1) {
       int pin = (i==0?RELAY1:(i==1?RELAY2:(i==2?RELAY3:RELAY4)));
-      digitalWrite(pin, LOW); // AAN
+      digitalWrite(pin, LOW); // ON
     }
   }
   delay(levels[level-1].flashTime);
   setAllRelays(HIGH);
 }
 
-// Stop alle activiteiten
+///////////////////////////////////////////
+//
+// Immediately stops audio and relays.
+// Resets all level state.
+//
+///////////////////////////////////////////
 void stopAll() {
   setAllRelays(HIGH);
   myDFPlayer.stop();
@@ -86,7 +148,12 @@ void stopAll() {
   pendingLevel = -1;
 }
 
-// Wacht tot audio klaar is
+///////////////////////////////////////////
+//
+// Blocks execution until the DFPlayer
+// has finished playing the current track.
+//
+///////////////////////////////////////////
 void waitUntilAudioFinished() {
   delay(300);
   while (digitalRead(DF_BUSY) == LOW) {
@@ -94,7 +161,13 @@ void waitUntilAudioFinished() {
   }
 }
 
-// Speel alle tracks van een level achter elkaar in random volgorde
+///////////////////////////////////////////
+//
+// Main playback loop for a level.
+// Tracks are played endlessly in random
+// order until stopped or paused.
+//
+///////////////////////////////////////////
 void playLevelContinuous(int level) {
   while (currentLevel == level) {
     int count = levels[level-1].trackCount;
@@ -106,7 +179,7 @@ void playLevelContinuous(int level) {
     int track = levels[level-1].tracks[randomIndex];
     lastTrackPlayed = track;
 
-    // Pulse relais
+    // Pulse relays
     for (int i = 0; i < 4; i++) {
       int pin = (i==0?RELAY1:(i==1?RELAY2:(i==2?RELAY3:RELAY4)));
       digitalWrite(pin, (levels[level-1].relays[i] == 1) ? LOW : HIGH);
@@ -114,103 +187,117 @@ void playLevelContinuous(int level) {
     delay(levels[level-1].flashTime);
     setAllRelays(HIGH);
 
-    // Speel track
+    // Play track
     myDFPlayer.play(track);
     delay(200);
 
-    // Wacht tot track klaar of stopknop gedrukt
+    // Wait until track finished or stop button pressed
     while (digitalRead(DF_BUSY) == LOW) {
       delay(50);
-      if (digitalRead(buttonPins[5]) == LOW) { // Stopknop
+      if (digitalRead(buttonPins[5]) == LOW) { // Stop button
         stopAll();
         return;
       }
 
-      // Pauzeknop: 1-5 levelknoppen
+      // Pause buttons: level buttons 1–5
       for (int i = 0; i < 5; i++) {
         if (digitalRead(buttonPins[i]) == LOW) {
           delay(200); // debounce
-          Serial.println("⏸ Pauze!");
+          Serial.println("⏸ Pause!");
           setBlueLeds(true);
 
-          // Speel random pauze-track met eigen volume
+          // Play random pause track with its own volume
           int pauseTrack = pauseTracks[random(0, pauseTrackCount)];
-          Serial.print("▶️ Pauze track: ");
+          Serial.print("Pause track: ");
           Serial.println(pauseTrack);
           myDFPlayer.volume(pauseTrackVolume);
           myDFPlayer.play(pauseTrack);
           waitUntilAudioFinished();
 
           setBlueLeds(false);
-          Serial.println("▶️ Wacht 10 seconden voor hervatten...");
+          Serial.println("Waiting 10 seconds before resuming...");
           delay(pauseDelay);
 
-          // Hervat level volume
+          // Restore level volume
           myDFPlayer.volume(levels[currentLevel-1].volume);
         }
       }
     }
-    delay(100); // buffer voor volgende track
+    delay(100); // buffer before next track
   }
 }
 
-// ---------- Setup ----------
+///////////////////////////////////////////
+//
+// setup():
+// - Initializes hardware
+// - Connects DFPlayer
+// - Plays startup explanation
+//
+///////////////////////////////////////////
 void setup() {
   Serial.begin(115200);
 
-  // Relais setup
+  // Relay setup
   pinMode(RELAY1, OUTPUT);
   pinMode(RELAY2, OUTPUT);
   pinMode(RELAY3, OUTPUT);
   pinMode(RELAY4, OUTPUT);
   setAllRelays(HIGH);
 
-  // Blauwe LEDs setup
+  // Blue LEDs setup
   for (int i = 0; i < 4; i++) {
     pinMode(blueLeds[i], OUTPUT);
     digitalWrite(blueLeds[i], LOW);
   }
 
-  // DFPlayer BUSY-pin
+  // DFPlayer BUSY pin
   pinMode(DF_BUSY, INPUT);
 
-  // Knoppen
+  // Buttons
   for (int i = 0; i < 6; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
   }
 
-  // DFPlayer op UART2
+  // DFPlayer on UART2
   mySerial.begin(9600, SERIAL_8N1, 16, 17);
   if (!myDFPlayer.begin(mySerial)) {
-    Serial.println("DFPlayer niet gevonden!");
+    Serial.println("DFPlayer not found!");
     while (true);
   }
 
-  Serial.println("✅ DFPlayer verbonden");
+  Serial.println("DFPlayer connected");
   myDFPlayer.volume(12);
   randomSeed(analogRead(34));
 
-  // Start audio bij opstart met blauwe LEDs
+  // Startup audio with blue LEDs
   setBlueLeds(true);
   myDFPlayer.play(1);
   waitUntilAudioFinished();
   setBlueLeds(false);
 }
 
-// ---------- Loop ----------
+///////////////////////////////////////////
+//
+// loop():
+// - First button press plays explanation
+// - Second press starts the level
+// - Stop button interrupts everything
+//
+///////////////////////////////////////////
 void loop() {
   for (int i = 0; i < 6; i++) {
     if (digitalRead(buttonPins[i]) == LOW) {
       delay(200); // debounce
 
-      if (i == 5) { // Stopknop
+      if (i == 5) { // Stop button
         stopAll();
         continue;
       }
 
       int selectedLevel = i + 1;
 
-      // Eerste klik → uitleg
+      // First click → explanation
       if (pendingLevel == -1 && currentLevel == -1) {
         pendingLevel = selectedLevel;
         setBlueLeds(true);
@@ -218,7 +305,7 @@ void loop() {
         waitUntilAudioFinished();
         setBlueLeds(false);
       }
-      // Tweede klik → start level
+      // Second click → start level
       else if (pendingLevel == selectedLevel && currentLevel == -1) {
         currentLevel = selectedLevel;
         pendingLevel = -1;
