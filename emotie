@@ -12,6 +12,7 @@ const int servoUD   = 1;  // ogen op/neer
 const int servoLID  = 2;  // ooglid
 const int servoBUD  = 3;  // wenkbrauwen op/neer
 const int servoBLR  = 4;  // wenkbrauwen links/rechts
+const int servoMOUTH = 5; // mond midden
 
 // ---------------- OGEN ----------------
 const float lr_min = 75, lr_max = 105;
@@ -46,25 +47,40 @@ const float lid_speed_blink  = 280;
 const float lid_speed_squint = 100;
 
 // ---------------- WENKBRAUWEN ----------------
-// Op / neer
 const float brow_ud_min = 65;
-const float brow_ud_max = 100;//beneden
+const float brow_ud_max = 100;
+
 float brow_ud_pos = 90;
 float brow_ud_target = 90;
-const float brow_ud_speed = 20;
-const int   brow_ud_chance = 1200;
 
-// Links / rechts
+const float brow_ud_speed = 20;
+const int brow_ud_chance = 1200;
+
 const float brow_lr_min = 70;
-const float brow_lr_max = 120;//rechts
+const float brow_lr_max = 120;
+
 float brow_lr_pos = 90;
 float brow_lr_target = 90;
+
 const float brow_lr_speed = 25;
-const int   brow_lr_chance = 900;
+const int brow_lr_chance = 900;
+
+// ---------------- MOND ----------------
+const float mouth_happy = 60;   // lach
+const float mouth_sad   = 120;  // sip
+const float mouth_neutral = 90;
+
+float mouth_pos = 90;
+float mouth_target = 90;
+
+const float mouth_speed = 35;
+
+unsigned long mouthHoldUntil = 0;
 
 // ---------------- TIMING ----------------
 unsigned long lastUpdate = 0;
 unsigned long pauseUntil = 0;
+
 const unsigned long updateInterval = 8;
 
 // ---------------- HULPFUNCTIES ----------------
@@ -89,9 +105,11 @@ void updateBrowUD(float dt) {
   if (random(0, brow_ud_chance) < 2) {
     brow_ud_target = random(brow_ud_min * 10, brow_ud_max * 10) / 10.0;
   }
+
   brow_ud_pos += constrain(brow_ud_target - brow_ud_pos,
                            -brow_ud_speed * dt,
                             brow_ud_speed * dt);
+
   pwm.setPWM(servoBUD, 0, gradenNaarPWM(brow_ud_pos));
 }
 
@@ -99,23 +117,54 @@ void updateBrowLR(float dt) {
   if (random(0, brow_lr_chance) < 2) {
     brow_lr_target = random(brow_lr_min * 10, brow_lr_max * 10) / 10.0;
   }
+
   brow_lr_pos += constrain(brow_lr_target - brow_lr_pos,
                            -brow_lr_speed * dt,
                             brow_lr_speed * dt);
+
   pwm.setPWM(servoBLR, 0, gradenNaarPWM(brow_lr_pos));
+}
+
+// ---------------- MOND FUNCTIE ----------------
+void updateMouth(float dt, unsigned long now) {
+
+  if (now > mouthHoldUntil) {
+
+    int emotion = random(0, 100);
+
+    if (emotion < 40) mouth_target = mouth_neutral;
+    else if (emotion < 70) mouth_target = mouth_happy;
+    else mouth_target = mouth_sad;
+
+    mouthHoldUntil = now + random(1500, 4000);
+  }
+
+  float dist = abs(mouth_target - mouth_pos);
+
+  float speed = (dist > 5)
+      ? mouth_speed
+      : map(dist * 100, 0, 500, 10 * 100, mouth_speed * 100) / 100.0;
+
+  mouth_pos += constrain(mouth_target - mouth_pos, -speed * dt, speed * dt);
+
+  pwm.setPWM(servoMOUTH, 0, gradenNaarPWM(mouth_pos));
 }
 
 // ---------------- SETUP ----------------
 void setup() {
+
   pwm.begin();
   pwm.setPWMFreq(50);
   delay(300);
+
   randomSeed(analogRead(A0));
 }
 
 // ---------------- LOOP ----------------
 void loop() {
+
   unsigned long now = millis();
+
   if (now - lastUpdate < updateInterval) return;
 
   float dt = (now - lastUpdate) / 1000.0;
@@ -128,22 +177,24 @@ void loop() {
     if (lidState == LID_OPEN && random(0, 5000) < 2) startSquint(now);
 
     float speed = (lidState == LID_SQUINT) ? lid_speed_squint : lid_speed_blink;
+
     lid_pos += constrain(lid_target - lid_pos, -speed * dt, speed * dt);
 
     switch (lidState) {
+
       case LID_BLINK_CLOSE:
         if (abs(lid_pos - lid_closed) < 1) {
           lidState = LID_BLINK_OPEN;
           lid_target = lid_open;
         }
-        break;
+      break;
 
       case LID_BLINK_OPEN:
         if (abs(lid_pos - lid_open) < 1) {
           lidState = LID_OPEN;
-          if (random(0, 100) < 15) startBlink();
+          if (random(0,100) < 15) startBlink();
         }
-        break;
+      break;
 
       case LID_SQUINT:
         lid_target = lid_half + sin(now * 0.01) * 0.8;
@@ -151,37 +202,46 @@ void loop() {
           lidState = LID_BLINK_OPEN;
           lid_target = lid_open;
         }
-        break;
+      break;
 
       default:
-        break;
+      break;
     }
 
     pwm.setPWM(servoLID, 0, gradenNaarPWM(lid_pos));
 
     updateBrowUD(dt);
     updateBrowLR(dt);
+    updateMouth(dt, now);
+
     return;
   }
 
   // ---------- NIEUWE OOGTARGETS ----------
   if (abs(lr_target - lr_pos) < 0.3 && abs(ud_target - ud_pos) < 0.3) {
+
     lr_target = random(lr_min * 10, lr_max * 10) / 10.0;
+
     if (random(0, 100) < 60)
       ud_target = random(ud_min * 10, ud_max * 10) / 10.0;
+
     pauseUntil = now + random(600, 2000);
   }
 
   // ---------- OGEN LINKS / RECHTS ----------
   float lr_dist = abs(lr_target - lr_pos);
+
   float lr_speed = (lr_dist > 5) ? lr_fast :
     map(lr_dist * 100, 0, 500, lr_slow * 100, lr_fast * 100) / 100.0;
+
   lr_pos += constrain(lr_target - lr_pos, -lr_speed * dt, lr_speed * dt);
 
   // ---------- OGEN OP / NEER ----------
   float ud_dist = abs(ud_target - ud_pos);
+
   float ud_speed = (ud_dist > 4) ? ud_fast :
     map(ud_dist * 100, 0, 400, ud_slow * 100, ud_fast * 100) / 100.0;
+
   ud_pos += constrain(ud_target - ud_pos, -ud_speed * dt, ud_speed * dt);
 
   pwm.setPWM(servoLR, 0, gradenNaarPWM(lr_pos));
@@ -189,4 +249,5 @@ void loop() {
 
   updateBrowUD(dt);
   updateBrowLR(dt);
+  updateMouth(dt, now);
 }
