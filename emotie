@@ -7,16 +7,17 @@ Adafruit_PWMServoDriver pwm(0x40);
 #define SERVOMAX 560
 
 // ---------------- SERVOS ----------------
-const int servoLR   = 0;  // ogen links/rechts
-const int servoUD   = 1;  // ogen op/neer
-const int servoLID  = 2;  // ooglid
-const int servoBUD  = 3;  // wenkbrauwen op/neer
-const int servoBLR  = 4;  // wenkbrauwen links/rechts
-const int servoMOUTH = 5; // mond midden
+const int servoLR   = 0;
+const int servoUD   = 1;
+const int servoLID  = 2;
+const int servoBUD  = 3;
+const int servoBLR  = 4;
+const int servoMOUTH = 5;
+const int servoHEAD  = 6;
 
 // ---------------- OGEN ----------------
 const float lr_min = 75, lr_max = 105;
-const float ud_min = 80, ud_max = 140;
+const float ud_min = 60, ud_max = 120;
 
 float lr_pos = 90, lr_target = 90;
 float ud_pos = 90, ud_target = 90;
@@ -48,7 +49,7 @@ const float lid_speed_squint = 100;
 
 // ---------------- WENKBRAUWEN ----------------
 const float brow_ud_min = 65;
-const float brow_ud_max = 100;
+const float brow_ud_max = 90;
 
 float brow_ud_pos = 90;
 float brow_ud_target = 90;
@@ -66,9 +67,9 @@ const float brow_lr_speed = 25;
 const int brow_lr_chance = 900;
 
 // ---------------- MOND ----------------
-const float mouth_happy = 60;   // lach
-const float mouth_sad   = 120;  // sip
-const float mouth_neutral = 90;
+const float mouth_happy = 60;
+const float mouth_sad   = 130;
+const float mouth_neutral = 100;
 
 float mouth_pos = 90;
 float mouth_target = 90;
@@ -77,13 +78,24 @@ const float mouth_speed = 35;
 
 unsigned long mouthHoldUntil = 0;
 
+// ---------------- HOOFD ----------------
+const float head_min = 70;
+const float head_max = 110;
+
+float head_pos = 90;
+float head_target = 90;
+
+const float head_speed = 15;
+
+unsigned long headNextMove = 0;
+
 // ---------------- TIMING ----------------
 unsigned long lastUpdate = 0;
 unsigned long pauseUntil = 0;
 
 const unsigned long updateInterval = 8;
 
-// ---------------- HULPFUNCTIES ----------------
+// ---------------- HULPFUNCTIE ----------------
 int gradenNaarPWM(float graden) {
   graden = constrain(graden, 0, 180);
   return map(graden * 100, 0, 18000, SERVOMIN, SERVOMAX);
@@ -102,6 +114,7 @@ void startSquint(unsigned long now) {
 
 // ---------------- WENKBRAUW FUNCTIES ----------------
 void updateBrowUD(float dt) {
+
   if (random(0, brow_ud_chance) < 2) {
     brow_ud_target = random(brow_ud_min * 10, brow_ud_max * 10) / 10.0;
   }
@@ -114,6 +127,7 @@ void updateBrowUD(float dt) {
 }
 
 void updateBrowLR(float dt) {
+
   if (random(0, brow_lr_chance) < 2) {
     brow_lr_target = random(brow_lr_min * 10, brow_lr_max * 10) / 10.0;
   }
@@ -125,7 +139,7 @@ void updateBrowLR(float dt) {
   pwm.setPWM(servoBLR, 0, gradenNaarPWM(brow_lr_pos));
 }
 
-// ---------------- MOND FUNCTIE ----------------
+// ---------------- MOND ----------------
 void updateMouth(float dt, unsigned long now) {
 
   if (now > mouthHoldUntil) {
@@ -150,11 +164,33 @@ void updateMouth(float dt, unsigned long now) {
   pwm.setPWM(servoMOUTH, 0, gradenNaarPWM(mouth_pos));
 }
 
+// ---------------- HOOFD ----------------
+void updateHead(float dt, unsigned long now) {
+
+  if (now > headNextMove) {
+
+    head_target = random(head_min * 10, head_max * 10) / 10.0;
+
+    headNextMove = now + random(10000, 20000);
+  }
+
+  float dist = abs(head_target - head_pos);
+
+  float speed = (dist > 3)
+      ? head_speed
+      : map(dist * 100, 0, 300, 5 * 100, head_speed * 100) / 100.0;
+
+  head_pos += constrain(head_target - head_pos, -speed * dt, speed * dt);
+
+  pwm.setPWM(servoHEAD, 0, gradenNaarPWM(head_pos));
+}
+
 // ---------------- SETUP ----------------
 void setup() {
 
   pwm.begin();
   pwm.setPWMFreq(50);
+
   delay(300);
 
   randomSeed(analogRead(A0));
@@ -213,6 +249,7 @@ void loop() {
     updateBrowUD(dt);
     updateBrowLR(dt);
     updateMouth(dt, now);
+    updateHead(dt, now);
 
     return;
   }
@@ -228,7 +265,7 @@ void loop() {
     pauseUntil = now + random(600, 2000);
   }
 
-  // ---------- OGEN LINKS / RECHTS ----------
+  // ---------- OGEN LINKS/RECHTS ----------
   float lr_dist = abs(lr_target - lr_pos);
 
   float lr_speed = (lr_dist > 5) ? lr_fast :
@@ -236,7 +273,7 @@ void loop() {
 
   lr_pos += constrain(lr_target - lr_pos, -lr_speed * dt, lr_speed * dt);
 
-  // ---------- OGEN OP / NEER ----------
+  // ---------- OGEN OP/NEER ----------
   float ud_dist = abs(ud_target - ud_pos);
 
   float ud_speed = (ud_dist > 4) ? ud_fast :
@@ -250,4 +287,5 @@ void loop() {
   updateBrowUD(dt);
   updateBrowLR(dt);
   updateMouth(dt, now);
+  updateHead(dt, now);
 }
